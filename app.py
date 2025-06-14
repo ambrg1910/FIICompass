@@ -1,9 +1,8 @@
-# app.py (versão Final - Arquitetura Híbrida Estável)
+# app.py (Versão Final - Arquitetura Híbrida Estável)
 import streamlit as st
 import pandas as pd
 import yfinance as yf
 import plotly.graph_objects as go
-from datetime import datetime
 
 # --- Configuração da página e CSS ---
 st.set_page_config(page_title="FII Compass", layout="wide")
@@ -31,14 +30,11 @@ def get_history(ticker):
         fii = yf.Ticker(f"{ticker}.SA")
         prices = fii.history(period="1y")['Close']
         dividends = fii.dividends
-        one_year_ago = datetime.now() - pd.DateOffset(years=1)
-        if dividends.index.tz is not None:
-             one_year_ago = pd.to_datetime(one_year_ago).tz_localize(dividends.index.tz)
-        return prices, dividends[dividends.index > one_year_ago]
+        return prices, dividends
     except: return None, None
 
-def plot_chart(df, title, y_axis_title):
-    fig = go.Figure(go.Scatter(x=df.index, y=df.values, mode='lines', line=dict(color='#003366', width=2.5)))
+def plot_chart(df_series, title, y_axis_title):
+    fig = go.Figure(go.Scatter(x=df_series.index, y=df_series.values, mode='lines', line=dict(color='#003366', width=2.5)))
     fig.update_layout(title=dict(text=title, x=0.5, font=dict(size=16)), yaxis_title=y_axis_title, xaxis_title="", template='plotly_white', height=300, margin=dict(t=40, b=20, l=0, r=0))
     return fig
 
@@ -56,7 +52,7 @@ if df is not None:
 
     with tab2:
         with st.container():
-            st.markdown("<div class='card'><h3>Análise Comparativa e Raio-X</h3><p>Selecione FIIs para uma análise profunda e compare o histórico.</p></div>", unsafe_allow_html=True)
+            st.markdown("<div class='card'><h3>Análise Comparativa e Raio-X</h3><p>Selecione FIIs para uma análise profunda.</p></div>", unsafe_allow_html=True)
             fiis_list = sorted(df['Ticker'].tolist())
             selected_fiis = st.multiselect("Selecione os FIIs:", options=fiis_list, default=['BTLG11', 'MXRF11'])
             
@@ -72,6 +68,8 @@ if df is not None:
                             if prices is not None: st.plotly_chart(plot_chart(prices, "Histórico de Preço (1 Ano)", "Preço (R$)"), use_container_width=True)
                             else: st.warning("Não foi possível carregar o histórico de preços.")
                         with col2:
+                            # CORREÇÃO DEFINITIVA DO KEYERROR 'DIVIDENDS'
+                            # Agora o `dividends` é a série de dados, não precisa acessar uma coluna.
                             if dividends is not None and not dividends.empty: st.plotly_chart(plot_chart(dividends, "Histórico de Dividendos (1 Ano)", "Dividendo (R$)"), use_container_width=True)
                             else: st.info("Sem histórico de dividendos no período.")
 else:
