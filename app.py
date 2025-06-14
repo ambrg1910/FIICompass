@@ -1,8 +1,8 @@
-# app.py (versão 7.2 - Correção Final de TypeError de Timezone)
+# app.py (versão 8.0 - Integridade de Dados & Apresentação Premium)
 
 import streamlit as st
 import pandas as pd
-from datetime import datetime, timezone # Importamos o timezone
+from datetime import datetime
 import yfinance as yf
 import plotly.graph_objects as go
 
@@ -17,12 +17,13 @@ def load_css():
         body { font-family: 'Segoe UI', 'Roboto', sans-serif; }
         .card { background-color: #FFFFFF; padding: 20px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); margin-bottom: 20px; border: 1px solid #EAEAEA; }
         h1, h2, h3 { color: #1E293B; }
-        .st-emotion-cache-11604p5 { background-color: #F8F9FA; border-radius: 8px; }
+        /* Tabela com hover e bordas mais suaves */
+        .stDataFrame { border-radius: 8px; }
     </style>
     """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# BASE DE DADOS EXPANDIDA E FUNÇÕES
+# BASE DE DADOS E FUNÇÕES
 # -----------------------------------------------------------------------------
 @st.cache_resource
 def get_fii_list():
@@ -37,30 +38,31 @@ def get_fii_data_yfinance(ticker):
     try:
         fii = yf.Ticker(f"{ticker}.SA")
         info = fii.info
+        
+        # --- CÁLCULO MANUAL E ROBUSTO DO DIVIDEND YIELD ---
+        dividends_last_12m = fii.dividends.loc[fii.dividends.index > (datetime.now() - pd.DateOffset(years=1))].sum()
+        price = info.get('regularMarketPrice', 0.0)
+        
+        # Garante que não haverá divisão por zero
+        dy_12m = (dividends_last_12m / price * 100) if price > 0 else 0.0
+
         return {
             'Ticker': ticker, 'Tipo': get_fii_types().get(ticker, 'Outro'),
-            'Preço Atual': info.get('regularMarketPrice', 0.0),
-            'DY (12M)': (info.get('trailingAnnualDividendYield', 0.0) * 100),
+            'Preço Atual': price,
+            'DY (12M)': dy_12m, # Usamos nosso valor calculado, muito mais confiável
             'Liquidez Diária': info.get('averageVolume', 0),
         }
-    except Exception: return None
+    except Exception:
+        return None
 
 @st.cache_data(ttl=900)
 def get_fii_history_yfinance(ticker):
-    """Função para buscar o histórico de preços e dividendos para os gráficos."""
     fii = yf.Ticker(f"{ticker}.SA")
     hist_prices = fii.history(period="1y")
-
-    # CORREÇÃO DEFINITIVA DO TYPEERROR
-    # 1. Pegamos a data de um ano atrás.
     one_year_ago = datetime.now() - pd.DateOffset(years=1)
-    # 2. Se o índice de dividendos tiver um fuso horário...
     if fii.dividends.index.tz is not None:
-        # ...nós tornamos a nossa data consciente do mesmo fuso horário para a comparação.
         one_year_ago = pd.to_datetime(one_year_ago).tz_localize(fii.dividends.index.tz)
-
     hist_dividends = fii.dividends.loc[fii.dividends.index > one_year_ago]
-    
     return hist_prices, hist_dividends
 
 @st.cache_data(ttl=86400)
@@ -72,7 +74,8 @@ def get_selic_rate_from_bcb():
         selic_diaria = float(response.json()[0]['valor'])
         selic_anual = (1 + (selic_diaria / 100))**252 - 1
         return selic_anual * 100
-    except: return 10.5
+    except:
+        return 10.5
 
 def calculate_scores(fii_info, selic):
     dy = fii_info.get('DY (12M)', 0)
@@ -86,9 +89,8 @@ def calculate_scores(fii_info, selic):
     return fii_info
 
 def plot_chart(df, y_col, title, y_title, hover_template):
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=df.index, y=df[y_col], mode='lines', name=y_title, hovertemplate=hover_template, line=dict(color='#003366', width=2)))
-    fig.update_layout(title=dict(text=title, x=0.5, font=dict(size=18)), yaxis_title=y_title, xaxis_title="Data", template='plotly_white', height=300)
+    fig = go.Figure(go.Scatter(x=df.index, y=df[y_col], mode='lines', name=y_title, hovertemplate=hover_template, line=dict(color='#003366', width=2)))
+    fig.update_layout(title=dict(text=title, x=0.5, font=dict(size=18)), yaxis_title=y_title, xaxis_title="Data", template='plotly_white', height=300, margin=dict(t=50, b=10, l=10, r=10))
     return fig
 
 # --- Carga inicial e cache de todos os dados ---
@@ -101,7 +103,7 @@ def load_all_fiis_data(selic_rate):
         data = get_fii_data_yfinance(ticker)
         if data:
             all_data.append(calculate_scores(data, selic_rate))
-        progress_bar.progress((i + 1) / len(fiis_list), text=f"Buscando dados de {ticker}...")
+        progress_bar.progress((i + 1) / len(fiis_list), text=f"Analisando {ticker}...")
     progress_bar.empty()
     return pd.DataFrame(all_data)
 
@@ -114,13 +116,18 @@ st.markdown("---")
 selic_atual = get_selic_rate_from_bcb()
 all_fiis_df = load_all_fiis_data(selic_atual)
 
-# Estrutura de Abas
+# --- ESTRUTURA DE ABAS ---
 tab1, tab2 = st.tabs(["📊 Visão Geral do Mercado", "🔬 Análise Detalhada e Raio-X"])
 
 with tab1:
-    st.markdown("<div class='card'><h3>Panorama Completo do Mercado</h3><p>Explore e compare os principais FIIs listados. Utilize os filtros nas colunas para encontrar os ativos que se encaixam na sua estratégia.</p></div>", unsafe_allow_html=True)
+    st.markdown("<div class='card'><h3>Panorama Completo do Mercado</h3><p>Explore e compare os principais FIIs listados. Utilize os filtros e a ordenação nas colunas para encontrar os ativos que se encaixam na sua estratégia.</p></div>", unsafe_allow_html=True)
     if not all_fiis_df.empty:
-        st.dataframe(all_fiis_df.style.format({'Preço Atual': 'R$ {:.2f}', 'DY (12M)': '{:.2f}%', 'Liquidez Diária': '{:,.0f}'}), use_container_width=True, height=500)
+        # CORREÇÃO E MELHORIA NA FORMATAÇÃO
+        st.dataframe(all_fiis_df.style.format({
+            'Preço Atual': 'R$ {:.2f}', 
+            'DY (12M)': '{:.2f}%', 
+            'Liquidez Diária': 'R$ {:,.0f}' # Adicionado R$ e garantido 0 casas decimais
+        }), use_container_width=True, height=600)
     else:
         st.error("Não foi possível carregar os dados do mercado. Tente atualizar a página em alguns minutos.")
 
@@ -129,18 +136,16 @@ with tab2:
     fiis_selecionados = st.multiselect('Selecione os FIIs para o Raio-X:', options=get_fii_list(), default=['BTLG11', 'MXRF11', 'XPML11'])
     
     if fiis_selecionados:
-        # Lógica para mostrar a tabela de resumo dos selecionados
+        # A lógica para a aba 2 permanece a mesma, agora com dados mais confiáveis
         if not all_fiis_df.empty:
             selected_df = all_fiis_df[all_fiis_df['Ticker'].isin(fiis_selecionados)]
             if not selected_df.empty:
-                st.dataframe(selected_df.style.format({'Preço Atual': 'R$ {:.2f}', 'DY (12M)': '{:.2f}%', 'Liquidez Diária': '{:,.0f}'}), use_container_width=True, hide_index=True)
+                st.dataframe(selected_df.style.format({'Preço Atual': 'R$ {:.2f}', 'DY (12M)': '{:.2f}%', 'Liquidez Diária': 'R$ {:,.0f}'}), use_container_width=True, hide_index=True)
         
         st.markdown("---")
         st.markdown("### 🔬 Raio-X Individual")
-        
         for ticker in fiis_selecionados:
             with st.expander(f"**{ticker}** - Análise Histórica"):
-                # Bloco de segurança para o caso de falha no histórico
                 try:
                     prices, dividends = get_fii_history_yfinance(ticker)
                     col1, col2 = st.columns(2)
@@ -158,4 +163,4 @@ with tab2:
     else:
         st.info("Selecione um ou mais FIIs para iniciar o Raio-X.")
 
-st.markdown("<div style='text-align: center; margin-top: 30px;'><p>FII Compass | Versão Final e Estável</p></div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; margin-top: 30px;'><p>FII Compass | Produto Final e Confiável</p></div>", unsafe_allow_html=True)
