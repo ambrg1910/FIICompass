@@ -1,8 +1,8 @@
-# app.py (versão 7.1 - Correção do NameError e Otimização Final)
+# app.py (versão 7.2 - Correção Final de TypeError de Timezone)
 
 import streamlit as st
 import pandas as pd
-from datetime import datetime
+from datetime import datetime, timezone # Importamos o timezone
 import yfinance as yf
 import plotly.graph_objects as go
 
@@ -26,27 +26,11 @@ def load_css():
 # -----------------------------------------------------------------------------
 @st.cache_resource
 def get_fii_list():
-    return sorted([
-        'BTLG11', 'MXRF11', 'VGIR11', 'HGLG11', 'XPML11', 'KNCR11', 'VISC11',
-        'HGRU11', 'KNSC11', 'IRDM11', 'VILG11', 'CPTS11', 'RBRR11', 'MCCI11',
-        'XPLG11', 'RECR11', 'BCFF11', 'HGCR11', 'LVBI11', 'DEVA11', 'HGRE11',
-        'KNIP11', 'VRTA11', 'PVBI11', 'JSRE11', 'MALL11', 'GGRC11', 'ALZR11',
-        'BTCI11', 'BCRI11', 'BRCO11', 'VINO11', 'TORD11', 'RBRP11'
-    ])
+    return sorted(['BTLG11', 'MXRF11', 'VGIR11', 'HGLG11', 'XPML11', 'KNCR11', 'VISC11','HGRU11', 'KNSC11', 'IRDM11', 'VILG11', 'CPTS11', 'RBRR11', 'MCCI11','XPLG11', 'RECR11', 'BCFF11', 'HGCR11', 'LVBI11', 'DEVA11', 'HGRE11','KNIP11', 'VRTA11', 'PVBI11', 'JSRE11', 'MALL11', 'GGRC11', 'ALZR11','BTCI11', 'BCRI11', 'BRCO11', 'VINO11', 'TORD11', 'RBRP11'])
 
 @st.cache_resource
 def get_fii_types():
-    return {
-        'BTLG11': 'Tijolo', 'HGLG11': 'Tijolo', 'XPML11': 'Tijolo', 'VISC11': 'Tijolo',
-        'HGRU11': 'Tijolo', 'VILG11': 'Tijolo', 'XPLG11': 'Tijolo', 'HGRE11': 'Tijolo', 'LVBI11': 'Tijolo',
-        'PVBI11': 'Tijolo', 'JSRE11': 'Tijolo', 'MALL11': 'Tijolo', 'GGRC11': 'Tijolo',
-        'ALZR11': 'Tijolo', 'BRCO11': 'Tijolo', 'VINO11': 'Tijolo', 'RBRP11': 'Tijolo',
-        'MXRF11': 'Papel', 'VGIR11': 'Papel', 'KNCR11': 'Papel', 'KNSC11': 'Papel',
-        'IRDM11': 'Papel', 'CPTS11': 'Papel', 'RBRR11': 'Papel', 'MCCI11': 'Papel',
-        'RECR11': 'Papel', 'HGCR11': 'Papel', 'DEVA11': 'Papel', 'KNIP11': 'Papel',
-        'VRTA11': 'Papel', 'BTCI11': 'Papel', 'BCRI11': 'Papel', 'TORD11': 'Papel',
-        'BCFF11': 'Fundo de Fundos'
-    }
+    return { 'BTLG11': 'Tijolo', 'HGLG11': 'Tijolo', 'XPML11': 'Tijolo', 'VISC11': 'Tijolo','HGRU11': 'Tijolo', 'VILG11': 'Tijolo', 'XPLG11': 'Tijolo', 'HGRE11': 'Tijolo', 'LVBI11': 'Tijolo','PVBI11': 'Tijolo', 'JSRE11': 'Tijolo', 'MALL11': 'Tijolo', 'GGRC11': 'Tijolo','ALZR11': 'Tijolo', 'BRCO11': 'Tijolo', 'VINO11': 'Tijolo', 'RBRP11': 'Tijolo','MXRF11': 'Papel', 'VGIR11': 'Papel', 'KNCR11': 'Papel', 'KNSC11': 'Papel','IRDM11': 'Papel', 'CPTS11': 'Papel', 'RBRR11': 'Papel', 'MCCI11': 'Papel','RECR11': 'Papel', 'HGCR11': 'Papel', 'DEVA11': 'Papel', 'KNIP11': 'Papel','VRTA11': 'Papel', 'BTCI11': 'Papel', 'BCRI11': 'Papel', 'TORD11': 'Papel','BCFF11': 'Fundo de Fundos'}
 
 @st.cache_data(ttl=900)
 def get_fii_data_yfinance(ticker):
@@ -63,12 +47,23 @@ def get_fii_data_yfinance(ticker):
 
 @st.cache_data(ttl=900)
 def get_fii_history_yfinance(ticker):
+    """Função para buscar o histórico de preços e dividendos para os gráficos."""
     fii = yf.Ticker(f"{ticker}.SA")
     hist_prices = fii.history(period="1y")
-    hist_dividends = fii.dividends.loc[fii.dividends.index > (datetime.now() - pd.DateOffset(years=1))]
+
+    # CORREÇÃO DEFINITIVA DO TYPEERROR
+    # 1. Pegamos a data de um ano atrás.
+    one_year_ago = datetime.now() - pd.DateOffset(years=1)
+    # 2. Se o índice de dividendos tiver um fuso horário...
+    if fii.dividends.index.tz is not None:
+        # ...nós tornamos a nossa data consciente do mesmo fuso horário para a comparação.
+        one_year_ago = pd.to_datetime(one_year_ago).tz_localize(fii.dividends.index.tz)
+
+    hist_dividends = fii.dividends.loc[fii.dividends.index > one_year_ago]
+    
     return hist_prices, hist_dividends
 
-@st.cache_data(ttl=86400) # SELIC pode ser cacheada por um dia inteiro
+@st.cache_data(ttl=86400)
 def get_selic_rate_from_bcb():
     try:
         url = "https://api.bcb.gov.br/dados/serie/bcdata.sgs.11/dados/ultimos/1?formato=json"
@@ -97,7 +92,6 @@ def plot_chart(df, y_col, title, y_title, hover_template):
     return fig
 
 # --- Carga inicial e cache de todos os dados ---
-# MODIFICAÇÃO 1: A função agora RECEBE a SELIC como um "pacote"
 @st.cache_data(ttl=900)
 def load_all_fiis_data(selic_rate):
     all_data = []
@@ -106,7 +100,6 @@ def load_all_fiis_data(selic_rate):
     for i, ticker in enumerate(fiis_list):
         data = get_fii_data_yfinance(ticker)
         if data:
-            # MODIFICAÇÃO 2: Usamos a variável selic_rate que foi recebida, garantindo consistência.
             all_data.append(calculate_scores(data, selic_rate))
         progress_bar.progress((i + 1) / len(fiis_list), text=f"Buscando dados de {ticker}...")
     progress_bar.empty()
@@ -118,7 +111,6 @@ st.markdown("<h1 style='text-align: center; color: #1E293B;'>🧭 FII Compass</h
 st.markdown("<h3 style='text-align: center; color: #4A5568; font-weight: 400;'>Seu Norte no Mundo dos Fundos Imobiliários</h3>", unsafe_allow_html=True)
 st.markdown("---")
 
-# Buscamos a SELIC UMA VEZ e passamos para a função de carregamento
 selic_atual = get_selic_rate_from_bcb()
 all_fiis_df = load_all_fiis_data(selic_atual)
 
@@ -137,24 +129,33 @@ with tab2:
     fiis_selecionados = st.multiselect('Selecione os FIIs para o Raio-X:', options=get_fii_list(), default=['BTLG11', 'MXRF11', 'XPML11'])
     
     if fiis_selecionados:
-        selected_df = all_fiis_df[all_fiis_df['Ticker'].isin(fiis_selecionados)]
-        if not selected_df.empty:
-            st.dataframe(selected_df.style.format({'Preço Atual': 'R$ {:.2f}', 'DY (12M)': '{:.2f}%', 'Liquidez Diária': '{:,.0f}'}), use_container_width=True, hide_index=True)
-            st.markdown("---")
-            st.markdown("### 🔬 Raio-X Individual")
-            for ticker in fiis_selecionados:
-                with st.expander(f"**{ticker}** - Análise Histórica"):
+        # Lógica para mostrar a tabela de resumo dos selecionados
+        if not all_fiis_df.empty:
+            selected_df = all_fiis_df[all_fiis_df['Ticker'].isin(fiis_selecionados)]
+            if not selected_df.empty:
+                st.dataframe(selected_df.style.format({'Preço Atual': 'R$ {:.2f}', 'DY (12M)': '{:.2f}%', 'Liquidez Diária': '{:,.0f}'}), use_container_width=True, hide_index=True)
+        
+        st.markdown("---")
+        st.markdown("### 🔬 Raio-X Individual")
+        
+        for ticker in fiis_selecionados:
+            with st.expander(f"**{ticker}** - Análise Histórica"):
+                # Bloco de segurança para o caso de falha no histórico
+                try:
                     prices, dividends = get_fii_history_yfinance(ticker)
                     col1, col2 = st.columns(2)
                     with col1:
                         fig_price = plot_chart(prices, 'Close', 'Histórico de Preço (1 Ano)', 'Preço (R$)', '<b>Data</b>: %{x}<br><b>Preço</b>: R$ %{y:.2f}')
                         st.plotly_chart(fig_price, use_container_width=True)
                     with col2:
-                        fig_div = plot_chart(dividends, 'Dividends', 'Histórico de Dividendos (1 Ano)', 'Dividendo (R$)', '<b>Data</b>: %{x}<br><b>Dividendo</b>: R$ %{y:.2f}')
-                        st.plotly_chart(fig_div, use_container_width=True)
-        else:
-            st.warning("Nenhum dado encontrado para os FIIs selecionados.")
+                        if not dividends.empty:
+                            fig_div = plot_chart(dividends, 'Dividends', 'Histórico de Dividendos (1 Ano)', 'Dividendo (R$)', '<b>Data</b>: %{x}<br><b>Dividendo</b>: R$ %{y:.2f}')
+                            st.plotly_chart(fig_div, use_container_width=True)
+                        else:
+                            st.info("Este FII não pagou dividendos no último ano.")
+                except Exception as e:
+                    st.error(f"Não foi possível gerar os gráficos para {ticker}. Erro: {e}")
     else:
         st.info("Selecione um ou mais FIIs para iniciar o Raio-X.")
 
-st.markdown("<div style='text-align: center; margin-top: 30px;'><p>FII Compass | Versão Final</p></div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; margin-top: 30px;'><p>FII Compass | Versão Final e Estável</p></div>", unsafe_allow_html=True)
