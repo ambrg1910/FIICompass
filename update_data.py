@@ -1,4 +1,4 @@
-# update_data.py (versão Final - Usando Fundamentus para Estabilidade)
+# update_data.py (Versão Definitiva - Usando Fundamentus)
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
@@ -16,7 +16,6 @@ def collect_fii_data_from_fundamentus():
     fiis_list, fii_types = get_fii_list(), get_fii_types()
     
     print("--- INICIANDO COLETA DE DADOS DO FUNDAMENTUS ---")
-
     for i, ticker in enumerate(fiis_list):
         print(f"({i+1}/{len(fiis_list)}) Buscando {ticker}...", end='')
         try:
@@ -26,16 +25,18 @@ def collect_fii_data_from_fundamentus():
             response.raise_for_status()
             soup = BeautifulSoup(response.text, 'html.parser')
 
+            # Função auxiliar para buscar valor de forma segura
             def get_value(label):
-                element = soup.find(text=re.compile(label))
-                return element.find_next('span', class_='txt').text.strip() if element else '0'
+                element = soup.find('td', text=re.compile(label))
+                if element and element.find_next_sibling('td'):
+                    return element.find_next_sibling('td').text.strip()
+                return '0'
 
             data = {
-                'Ticker': ticker,
-                'Tipo': fii_types.get(ticker, 'Outro'),
-                'Preço Atual': float(get_value('Cotação').replace(',', '.')),
-                'P/VP': float(get_value('P/VP').replace(',', '.')),
+                'Ticker': ticker, 'Tipo': fii_types.get(ticker, 'Outro'),
+                'Preço Atual': float(get_value('Cotação').replace('.', '').replace(',', '.')),
                 'DY (12M)': float(get_value('Div. Yield').replace('%', '').replace(',', '.')),
+                'P/VP': float(get_value('P/VP').replace(',', '.')),
                 'Liquidez Diária': int(get_value('Liq. 2 meses').replace('.', '')),
             }
             all_data.append(data)
@@ -43,7 +44,7 @@ def collect_fii_data_from_fundamentus():
         except Exception as e:
             print(f" FALHA. Erro: {e}")
             failed_tickers.append(ticker)
-        time.sleep(0.1) # Pausa segura
+        time.sleep(0.2) # Pausa segura
         
     print("\n--- COLETA FINALIZADA ---")
     if all_data:
@@ -51,8 +52,7 @@ def collect_fii_data_from_fundamentus():
         df.to_csv('fiis_data.csv', index=False, float_format='%.2f')
         print(f"Sucesso! 'fiis_data.csv' criado com {len(all_data)} FIIs.")
         if failed_tickers: print(f"Falha ao buscar: {', '.join(failed_tickers)}")
-    else:
-        print("ERRO: Nenhum dado foi coletado.")
+    else: print("ERRO: Nenhum dado foi coletado.")
 
 if __name__ == "__main__":
     collect_fii_data_from_fundamentus()
