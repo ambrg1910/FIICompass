@@ -1,10 +1,11 @@
-# app.py (versão 9.0 - A Arquitetura Final com Batch API)
+# app.py (versão 10.0 - A Arquitetura Final: Paciência e Robustez)
 
 import streamlit as st
 import pandas as pd
 from datetime import datetime
 import yfinance as yf
 import plotly.graph_objects as go
+import time # Importamos a biblioteca para controlar o tempo
 
 # -----------------------------------------------------------------------------
 # CONFIGURAÇÃO DA PÁGINA E CSS
@@ -33,12 +34,22 @@ def get_fii_types():
     return { 'BTLG11': 'Tijolo', 'HGLG11': 'Tijolo', 'XPML11': 'Tijolo', 'VISC11': 'Tijolo','HGRU11': 'Tijolo', 'VILG11': 'Tijolo', 'XPLG11': 'Tijolo', 'HGRE11': 'Tijolo', 'LVBI11': 'Tijolo','PVBI11': 'Tijolo', 'JSRE11': 'Tijolo', 'MALL11': 'Tijolo', 'GGRC11': 'Tijolo','ALZR11': 'Tijolo', 'BRCO11': 'Tijolo', 'VINO11': 'Tijolo', 'RBRP11': 'Tijolo','MXRF11': 'Papel', 'VGIR11': 'Papel', 'KNCR11': 'Papel', 'KNSC11': 'Papel','IRDM11': 'Papel', 'CPTS11': 'Papel', 'RBRR11': 'Papel', 'MCCI11': 'Papel','RECR11': 'Papel', 'HGCR11': 'Papel', 'DEVA11': 'Papel', 'KNIP11': 'Papel','VRTA11': 'Papel', 'BTCI11': 'Papel', 'BCRI11': 'Papel', 'TORD11': 'Papel','BCFF11': 'Fundo de Fundos'}
 
 @st.cache_data(ttl=900)
+def get_fii_data_yfinance(ticker):
+    try:
+        fii = yf.Ticker(f"{ticker}.SA")
+        info = fii.info
+        dividends_last_12m = fii.dividends.loc[fii.dividends.index > (datetime.now() - pd.DateOffset(years=1))].sum()
+        price = info.get('regularMarketPrice', 0.0)
+        dy_12m = (dividends_last_12m / price * 100) if price > 0 else 0.0
+        return {'Ticker': ticker, 'Tipo': get_fii_types().get(ticker, 'Outro'),'Preço Atual': price, 'DY (12M)': dy_12m,'Liquidez Diária': info.get('averageVolume', 0)}
+    except Exception: return None
+
+@st.cache_data(ttl=900)
 def get_fii_history_yfinance(ticker):
     fii = yf.Ticker(f"{ticker}.SA")
     hist_prices = fii.history(period="1y")
     one_year_ago = datetime.now() - pd.DateOffset(years=1)
-    if fii.dividends.index.tz is not None:
-        one_year_ago = pd.to_datetime(one_year_ago).tz_localize(fii.dividends.index.tz)
+    if fii.dividends.index.tz is not None: one_year_ago = pd.to_datetime(one_year_ago).tz_localize(fii.dividends.index.tz)
     hist_dividends = fii.dividends.loc[fii.dividends.index > one_year_ago]
     return hist_prices, hist_dividends
 
@@ -69,45 +80,32 @@ def plot_chart(df, y_col, title, y_title, hover_template):
     fig.update_layout(title=dict(text=title, x=0.5, font=dict(size=18)), yaxis_title=y_title, xaxis_title="Data", template='plotly_white', height=300, margin=dict(t=50, b=10, l=10, r=10))
     return fig
 
-# --- FUNÇÃO DE CARGA PRINCIPAL REESCRITA PARA USAR BATCHING ---
+# --- FUNÇÃO DE CARGA FINAL, LENTA E SEGURA ---
 @st.cache_data(ttl=900)
 def load_all_fiis_data(selic_rate):
-    fiis_list = get_fii_list()
-    # 1. Preparamos a string para a chamada em lote
-    ticker_string = " ".join([f"{fii}.SA" for fii in fiis_list])
-    
-    # 2. Fazemos UMA ÚNICA chamada para todos os tickers
-    tickers_data = yf.Tickers(ticker_string)
-    
     all_data = []
-    progress_bar = st.progress(0, text="Processando dados do mercado...")
+    fiis_list = get_fii_list()
+    progress_bar = st.progress(0, text="Iniciando conexão com o mercado...")
 
-    # 3. Iteramos sobre os resultados que já foram baixados
-    for i, ticker_name in enumerate(fiis_list):
-        fii_obj = tickers_data.tickers[f'{ticker_name}.SA']
-        
-        try:
-            info = fii_obj.info
-            price = info.get('regularMarketPrice', 0.0)
-            
-            # Cálculo manual do DY permanece, pois é mais confiável
-            dividends_last_12m = fii_obj.dividends.loc[fii_obj.dividends.index > (datetime.now() - pd.DateOffset(years=1))].sum()
-            dy_12m = (dividends_last_12m / price * 100) if price > 0 else 0.0
-            
-            data = {
-                'Ticker': ticker_name, 'Tipo': get_fii_types().get(ticker_name, 'Outro'),
-                'Preço Atual': price,
-                'DY (12M)': dy_12m,
-                'Liquidez Diária': info.get('averageVolume', 0),
-            }
+    for i, ticker in enumerate(fiis_list):
+        # 1. Busca os dados de UM FII de cada vez
+        data = get_fii_data_yfinance(ticker)
+        if data:
             all_data.append(calculate_scores(data, selic_rate))
-        except Exception:
-            # Se um FII individual falhar (raro), pulamos ele mas continuamos
-            pass
+        
+        # 2. Atualiza a barra de progresso para o usuário
+        progress_bar.progress((i + 1) / len(fiis_list), text=f"Analisando {i+1}/{len(fiis_list)}: {ticker}...")
+        
+        # 3. ### A CHAVE DA VITÓRIA: PAUSA DELIBERADA ###
+        # Fazemos uma pequena pausa para não sobrecarregar a API
+        time.sleep(0.1)
 
-        progress_bar.progress((i + 1) / len(fiis_list), text=f"Processando {ticker_name}...")
-    
     progress_bar.empty()
+    
+    # Garantia de que não criaremos um DataFrame vazio se tudo falhar
+    if not all_data:
+        return pd.DataFrame()
+        
     return pd.DataFrame(all_data)
 
 # --- INÍCIO DA EXECUÇÃO DA INTERFACE ---
@@ -119,7 +117,7 @@ st.markdown("---")
 selic_atual = get_selic_rate_from_bcb()
 all_fiis_df = load_all_fiis_data(selic_atual)
 
-# Estrutura de Abas
+# --- ESTRUTURA DE ABAS ---
 tab1, tab2 = st.tabs(["📊 Visão Geral do Mercado", "🔬 Análise Detalhada e Raio-X"])
 
 with tab1:
@@ -127,18 +125,17 @@ with tab1:
     if not all_fiis_df.empty:
         st.dataframe(all_fiis_df.style.format({'Preço Atual': 'R$ {:.2f}', 'DY (12M)': '{:.2f}%', 'Liquidez Diária': 'R$ {:,.0f}'}), use_container_width=True, height=600)
     else:
-        st.error("Não foi possível carregar os dados do mercado. A API pode estar com instabilidade. Tente atualizar a página.")
+        st.error("Não foi possível carregar os dados do mercado. A API pode estar com instabilidade. Por favor, tente atualizar a página em alguns minutos.")
 
+# A Lógica da Aba 2 permanece a mesma, pois agora ela recebe um DataFrame confiável
 with tab2:
     st.markdown("<div class='card'><h3>Análise Comparativa e Raio-X</h3><p>Selecione os FIIs que deseja analisar em profundidade. Compare as métricas lado a lado e explore o histórico de cada um para uma decisão mais embasada.</p></div>", unsafe_allow_html=True)
     fiis_selecionados = st.multiselect('Selecione os FIIs para o Raio-X:', options=get_fii_list(), default=['BTLG11', 'MXRF11', 'XPML11'])
-    
     if fiis_selecionados:
         if not all_fiis_df.empty:
             selected_df = all_fiis_df[all_fiis_df['Ticker'].isin(fiis_selecionados)]
             if not selected_df.empty:
                 st.dataframe(selected_df.style.format({'Preço Atual': 'R$ {:.2f}', 'DY (12M)': '{:.2f}%', 'Liquidez Diária': 'R$ {:,.0f}'}), use_container_width=True, hide_index=True)
-        
         st.markdown("---")
         st.markdown("### 🔬 Raio-X Individual")
         for ticker in fiis_selecionados:
@@ -147,17 +144,13 @@ with tab2:
                     prices, dividends = get_fii_history_yfinance(ticker)
                     col1, col2 = st.columns(2)
                     with col1:
-                        fig_price = plot_chart(prices, 'Close', 'Histórico de Preço (1 Ano)', 'Preço (R$)', '<b>Data</b>: %{x}<br><b>Preço</b>: R$ %{y:.2f}')
-                        st.plotly_chart(fig_price, use_container_width=True)
+                        st.plotly_chart(plot_chart(prices, 'Close', 'Preço (1 Ano)', 'R$', '<b>Data</b>: %{x}<br><b>Preço</b>: R$ %{y:.2f}'), use_container_width=True)
                     with col2:
                         if not dividends.empty:
-                            fig_div = plot_chart(dividends, 'Dividends', 'Histórico de Dividendos (1 Ano)', 'Dividendo (R$)', '<b>Data</b>: %{x}<br><b>Dividendo</b>: R$ %{y:.2f}')
-                            st.plotly_chart(fig_div, use_container_width=True)
-                        else:
-                            st.info("Este FII não pagou dividendos no último ano.")
+                            st.plotly_chart(plot_chart(dividends, 'Dividends', 'Dividendos (1 Ano)', 'R$', '<b>Data</b>: %{x}<br><b>Dividendo</b>: R$ %{y:.2f}'), use_container_width=True)
+                        else: st.info("Sem dividendos registrados no último ano.")
                 except Exception as e:
                     st.error(f"Não foi possível gerar os gráficos para {ticker}. Erro: {e}")
-    else:
-        st.info("Selecione um ou mais FIIs para iniciar o Raio-X.")
+    else: st.info("Selecione um ou mais FIIs para o Raio-X.")
 
-st.markdown("<div style='text-align: center; margin-top: 30px;'><p>FII Compass | Versão 9.0 - Arquitetura Final</p></div>", unsafe_allow_html=True)
+st.markdown("<div style='text-align: center; margin-top: 30px;'><p>FII Compass | Arquitetura Definitiva</p></div>", unsafe_allow_html=True)
